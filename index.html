@@ -1,3 +1,4 @@
+
 <!doctype html>
 <html lang="ar" dir="rtl">
 <head>
@@ -107,6 +108,15 @@ button.ghost{background:transparent}
 .install-banner button{margin-inline-start:auto}
 .storage-box{padding:10px;border:1px solid #1b3c4d;border-radius:10px;background:#061019;margin-top:8px;font-size:12px}
 .search-bar{display:flex;gap:8px;margin-bottom:10px}
+.chip{margin:12px 12px 0;padding:10px 12px;border-radius:12px;font-size:12px;line-height:1.6;border:1px solid #1b3c4d;background:#0a1821;display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.chip.ok{border-color:#00ff8855;background:#00ff8810;color:#bfffe0}
+.chip.warn{border-color:#ffcc0055;background:#ffcc0010;color:#ffe9a3}
+.chip .grow{min-width:140px}
+.step-box{border:1px solid #173142;border-radius:12px;padding:12px;margin-top:10px;background:#061019}
+.step-box b{color:var(--c)}
+.code-box{display:flex;gap:8px;align-items:stretch;margin-top:8px}
+.code-box code{flex:1;min-width:0;direction:ltr;text-align:left;background:#020509;border:1px solid #122431;border-radius:10px;padding:10px;
+  font:12px/1.5 ui-monospace,Menlo,monospace;color:#bdf4ff;overflow-x:auto;white-space:pre;user-select:all;-webkit-user-select:all}
 </style>
 </head>
 <body>
@@ -127,6 +137,8 @@ button.ghost{background:transparent}
   </div>
 
   <div class="env-warn" id="envWarn"></div>
+
+  <div class="chip" id="helperChip">⏳ فحص المساعد المحلي…</div>
 
   <!-- HOME -->
   <div id="sheet-home" class="sheet active">
@@ -192,14 +204,24 @@ button.ghost{background:transparent}
 
       <label class="small" style="display:block;margin-top:12px">محرك الاستخراج
         <select id="strategy">
-          <option value="direct">مباشر (ملفات فقط — مستقل 100%)</option>
-          <option value="selfhost" selected>خادمي الخاص + مباشر</option>
-          <option value="cobalt">Cobalt عام (failover)</option>
+          <option value="auto" selected>تلقائي: المساعد المحلي ← Cobalt ← مباشر (موصى به)</option>
+          <option value="helper">المساعد المحلي فقط</option>
+          <option value="cobalt">Cobalt فقط</option>
+          <option value="direct">مباشر (ملفات mp4/mp3 فقط)</option>
         </select>
       </label>
 
-      <label class="small" style="display:block;margin-top:8px">رابط خادمك الخاص (Cobalt / yt-dlp API)
-        <input id="customEndpoint" placeholder="https://my-server.example" style="margin-top:4px">
+      <label class="small" style="display:block;margin-top:8px">عنوان المساعد المحلي (altra-server)
+        <input id="helperUrl" value="http://127.0.0.1:8787" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false" style="margin-top:4px;direction:ltr;text-align:left">
+      </label>
+      <div class="row" style="margin-top:6px">
+        <button class="act good" id="helperTest">فحص الاتصال</button>
+        <button class="act ghost grow" data-sheet-link="helper">كيف أشغّل المساعد؟</button>
+      </div>
+      <div class="small" id="helperState" style="margin-top:6px"></div>
+
+      <label class="small" style="display:block;margin-top:8px">رابط خادم Cobalt خاص (اختياري)
+        <input id="customEndpoint" placeholder="https://my-server.example" style="margin-top:4px;direction:ltr;text-align:left">
       </label>
 
       <label class="small" style="display:block;margin-top:8px">خادم Cobalt احتياطي
@@ -280,6 +302,57 @@ button.ghost{background:transparent}
     </div>
   </div>
 
+  <!-- HELPER -->
+  <div id="sheet-helper" class="sheet">
+    <div class="card">
+      <h2>🧩 المساعد المحلي · تحميل من كل المواقع</h2>
+      <div class="small" style="line-height:1.8">
+        المتصفح لا يستطيع وحده استخراج فيديو يوتيوب أو إنستغرام أو تيك توك. المساعد برنامج صغير يعمل على جهازك
+        ويستخدم <b>yt-dlp</b> (أكثر من 1000 موقع)، والتطبيق يرسل له الرابط ويستلم الملف. لا خوادم خارجية ولا حسابات.
+      </div>
+      <div class="chip" id="helperChip2" style="margin:10px 0 0">⏳</div>
+
+      <div class="step-box">
+        <b>أندرويد (Termux)</b>
+        <div class="small" style="line-height:1.8;margin-top:6px">
+          ١) ثبّت <b>Termux</b> من متجر F-Droid (نسخة Google Play قديمة).<br>
+          ٢) افتح Termux والصق الأمر التالي مرة واحدة، وانتظر حتى يظهر «ALTRA Helper»:
+        </div>
+        <div class="code-box"><code id="cmd1">curl -fsSL https://danial56hd-wq.github.io/ALTRA-DAWNLOADER/setup-termux.sh | bash</code><button class="act" data-copy="cmd1">نسخ</button></div>
+        <div class="small" style="line-height:1.8;margin-top:8px">
+          ٣) اترك Termux يعمل في الخلفية، وارجع إلى ALTRA. سيتحول الشريط في الأعلى إلى أخضر 🟢.<br>
+          في المرات القادمة شغّله بالأمر:
+        </div>
+        <div class="code-box"><code id="cmd2">cd ~/altra &amp;&amp; python altra-server.py</code><button class="act" data-copy="cmd2">نسخ</button></div>
+        <div class="small" style="line-height:1.8;margin-top:8px">
+          إذا سأل Chrome عن «الوصول إلى الشبكة المحلية» فاختر <b>سماح</b>. بدلاً من ذلك يمكنك فتح
+          <b>http://localhost:8787</b> وتثبيت التطبيق من هناك، فلا يحتاج أي إذن.
+        </div>
+      </div>
+
+      <div class="step-box">
+        <b>الكمبيوتر (Windows / Mac / Linux)</b>
+        <div class="small" style="line-height:1.8;margin-top:6px">
+          ثبّت Python وffmpeg، ثم نزّل الملف altra-server.py من المستودع وشغّله:
+        </div>
+        <div class="code-box"><code id="cmd3">pip install -U "yt-dlp[default]"
+python altra-server.py</code><button class="act" data-copy="cmd3">نسخ</button></div>
+      </div>
+
+      <div class="step-box">
+        <b>إنستغرام ومحتوى يطلب تسجيل دخول</b>
+        <div class="small" style="line-height:1.8;margin-top:6px">
+          إن ظهر خطأ «تسجيل دخول»، صدّر ملف <b>cookies.txt</b> من متصفحك (إضافة «Get cookies.txt LOCALLY»)
+          وضعه بجوار altra-server.py، ثم أعد تشغيل المساعد.
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:12px">
+        <button class="act primary grow" id="helperTest2">🔄 فحص الاتصال الآن</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ABOUT -->
   <div id="sheet-about" class="sheet">
     <div class="card">
@@ -337,6 +410,7 @@ button.ghost{background:transparent}
   <button class="ditem" id="shareAppBtn"><span class="ic">📤</span><span class="lab">مشاركة التطبيق</span></button>
   <button class="ditem" id="installMenuBtn"><span class="ic">⬇</span><span class="lab">تثبيت على سطح المكتب</span></button>
   <div class="dsep"></div>
+  <button class="ditem" data-sheet="helper"><span class="ic">🧩</span><span class="lab">المساعد المحلي</span></button>
   <button class="ditem" data-sheet="about"><span class="ic">ℹ</span><span class="lab">نبذة عن التطبيق</span></button>
   <button class="ditem" data-sheet="contact"><span class="ic">✉</span><span class="lab">التواصل مع المطور</span></button>
   <button class="ditem" data-sheet="console"><span class="ic">⌘</span><span class="lab">Console</span></button>
@@ -411,6 +485,19 @@ function friendlyError(e) {
   if (/auth|jwt|turnstile/i.test(m)) return 'هذا الخادم العام يطلب تسجيلاً أو تحققاً. استخدم خادم Cobalt الخاص بك في الإعدادات.';
   return m;
 }
+function sleep(ms, signal) {
+  return new Promise((res, rej) => {
+    const t = setTimeout(res, ms);
+    if (signal) signal.addEventListener('abort', () => { clearTimeout(t); rej(new DOMException('Aborted', 'AbortError')); }, { once: true });
+  });
+}
+function cleanUrl(u) {
+  try {
+    const x = new URL(u);
+    if (/(^|\.)instagram\.com$/.test(x.hostname)) x.search = '';
+    return x.toString();
+  } catch { return u; }
+}
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -456,6 +543,99 @@ function guessExt(url) {
   return m ? m[1].toLowerCase() : 'mp4';
 }
 
+/* ── Local helper (altra-server) ── */
+const helper = { base: '', ok: false, info: null, checkedAt: 0, err: '' };
+function helperBase() {
+  let b = ($('#helperUrl').value || '').trim().replace(/\/+$/, '');
+  if (b && !/^https?:\/\//i.test(b)) b = 'http://' + b;
+  return b || 'http://127.0.0.1:8787';
+}
+async function checkHelper(force) {
+  const base = helperBase();
+  if (!force && helper.base === base && Date.now() - helper.checkedAt < 15000) return helper.ok;
+  helper.base = base; helper.checkedAt = Date.now();
+  const c = new AbortController();
+  const t = setTimeout(() => c.abort(), 3000);
+  try {
+    const r = await fetch(base + '/health', { signal: c.signal, cache: 'no-store' });
+    const j = await r.json();
+    helper.ok = !!(j && j.ok && j.altra);
+    helper.info = helper.ok ? j : null;
+    helper.err = helper.ok ? '' : 'استجابة غير متوقعة';
+  } catch (e) {
+    helper.ok = false; helper.info = null; helper.err = e.message || String(e);
+  } finally { clearTimeout(t); }
+  renderHelperChip();
+  return helper.ok;
+}
+function renderHelperChip() {
+  let html, cls;
+  if (helper.ok) {
+    const i = helper.info || {};
+    cls = 'chip ok';
+    html = '🟢 <span class="grow">المساعد المحلي متصل · كل المواقع مدعومة'
+      + (i.ytdlp ? ' · yt-dlp ' + esc(i.ytdlp) : ' · <b>yt-dlp غير مثبّت</b>')
+      + (i.ffmpeg ? '' : ' · بدون ffmpeg') + '</span>';
+  } else {
+    cls = 'chip warn';
+    html = '🟡 <span class="grow">المساعد المحلي غير متصل · تعمل الملفات المباشرة فقط. لتحميل يوتيوب وإنستغرام وغيرهما شغّل المساعد.</span>'
+      + '<button class="act primary" data-sheet-link="helper" style="padding:6px 10px">كيف؟</button>';
+  }
+  ['#helperChip', '#helperChip2'].forEach(id => { const el = $(id); if (el) { el.className = cls; el.innerHTML = html; } });
+  const st = $('#helperState');
+  if (st) st.textContent = helper.ok ? ('✓ متصل: ' + helper.base) : ('✗ غير متصل (' + helper.base + ')' + (helper.err ? ' · ' + helper.err : ''));
+}
+async function initHelper() {
+  // التطبيق مفتوح من المساعد نفسه؟
+  try {
+    const r = await fetch('health', { cache: 'no-store' });
+    if (r.ok) {
+      const j = await r.json();
+      if (j && j.altra) { $('#helperUrl').value = location.origin; save(); }
+    }
+  } catch {}
+  await checkHelper(true);
+  setInterval(() => { if (!document.hidden) checkHelper(true); }, 30000);
+}
+async function helperRun(task, signal) {
+  const base = helper.base;
+  const r = await fetch(base + '/api/resolve', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+    body: JSON.stringify({ url: cleanUrl(task.source), quality: $('#quality').value, format: $('#format').value, mode: $('#mode').value })
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok || !j.id) throw new Error(j.error || ('HTTP ' + r.status));
+  task.engine = 'helper'; task.status = 'downloading'; task.progress = Math.max(task.progress, 8);
+  renderQueue();
+  let s;
+  try {
+    while (true) {
+      await sleep(700, signal);
+      const sr = await fetch(base + '/api/status/' + j.id, { signal, cache: 'no-store' });
+      s = await sr.json();
+      if (!sr.ok) throw new Error(s.error || 'status failed');
+      task.progress = Math.max(task.progress, Math.min(99, s.progress || 0));
+      task.speed = s.speed || 0; task.bytes = s.bytes || 0;
+      if (s.title) task.title = s.title;
+      if (s.filename) task.filename = s.filename;
+      renderQueue();
+      if (s.state === 'done') break;
+      if (s.state === 'cancelled') throw new DOMException('Aborted', 'AbortError');
+      if (s.state === 'error') { const e = new Error(s.error || 'فشل'); e.hint = s.hint; throw e; }
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') {
+      fetch(base + '/api/cancel/' + j.id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(() => {});
+    }
+    throw e;
+  }
+  task.filename = s.filename; task.bytes = s.size || task.bytes; task.fileUrl = base + '/file/' + j.id;
+  task.progress = 100; task.speed = 0;
+  log('HELPER DONE ' + task.filename + ' · ' + fmtBytes(task.bytes));
+  if (!nativeDownload(task.fileUrl, task.filename)) throw new Error('تعذّر بدء التنزيل من المساعد');
+  task.note = 'بدأ التنزيل في المتصفح، وإن لم يبدأ اضغط «حفظ»';
+}
+
 /* ── Persist ── */
 function save() {
   try {
@@ -465,7 +645,7 @@ function save() {
         quality: $('#quality').value, format: $('#format').value,
         mode: $('#mode').value, concurrency: $('#concurrency').value,
         strategy: $('#strategy').value, custom: $('#customEndpoint').value,
-        endpoint: $('#endpoint').value, lang: $('#langSel').value
+        endpoint: $('#endpoint').value, lang: $('#langSel').value, helper: $('#helperUrl').value
       }
     }));
   } catch(e) { log('SAVE ' + e.message); }
@@ -476,13 +656,16 @@ function load() {
     state.history = x.history || [];
     state.stats = x.stats || state.stats;
     const s = x.settings || {};
+    if (s.strategy === 'selfhost') s.strategy = 'auto';
     Object.entries(s).forEach(([k,v]) => {
       const map = { quality:'#quality', format:'#format', mode:'#mode', concurrency:'#concurrency',
-        strategy:'#strategy', custom:'#customEndpoint', endpoint:'#endpoint', lang:'#langSel' };
+        strategy:'#strategy', custom:'#customEndpoint', endpoint:'#endpoint', lang:'#langSel', helper:'#helperUrl' };
       if (map[k] && $(map[k]) && v) $(map[k]).value = v;
     });
-    applyLang($('#langSel').value || 'ar');
   } catch(e) { log('LOAD ' + e.message); }
+  if (!$('#strategy').value) $('#strategy').value = 'auto';
+  if (!$('#concurrency').value) $('#concurrency').value = '3';
+  applyLang($('#langSel').value || 'ar');
 }
 
 function applyLang(lang) {
@@ -501,6 +684,7 @@ function showSheet(id) {
   closeDrawer();
   if (id === 'stats') renderStats();
   if (id === 'history') renderHistory();
+  if (id === 'helper') checkHelper(true);
 }
 
 /* ── Storage folder ── */
@@ -535,12 +719,16 @@ async function cobaltPost(base, payload, signal) {
   const urls = [b + '/', b + '/api/json'];
   let last;
   for (const u of urls) {
+    const tc = new AbortController();
+    const tm = setTimeout(() => tc.abort(), 12000);
+    const fwd = () => tc.abort();
+    if (signal) signal.addEventListener('abort', fwd, { once: true });
     try {
       const r = await fetch(u, {
         method: 'POST',
         headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal
+        signal: tc.signal
       });
       const text = await r.text();
       let d; try { d = JSON.parse(text); } catch { d = { status:'error', error:{ message: text.slice(0,200) } }; }
@@ -551,9 +739,16 @@ async function cobaltPost(base, payload, signal) {
       last.code = d.error?.code || '';
       if (/auth|jwt|turnstile/i.test(last.code + msg)) { last.auth = true; throw last; }
     } catch (e) {
-      if (e.name === 'AbortError') throw e;
-      last = e;
+      if (e.name === 'AbortError') {
+        if (signal && signal.aborted) throw e;
+        last = new Error('انتهت مهلة الخادم (12 ثانية)');
+      } else {
+        last = e;
+      }
       if (e.auth) break;
+    } finally {
+      clearTimeout(tm);
+      if (signal) signal.removeEventListener('abort', fwd);
     }
   }
   throw last || new Error('API failed');
@@ -574,7 +769,7 @@ function normalize(d) {
 function buildPayload(url) {
   const fmt = $('#format').value, q = $('#quality').value, mode = $('#mode').value;
   const p = {
-    url,
+    url: cleanUrl(url),
     videoQuality: q === 'max' ? 'max' : q,
     filenameStyle: 'pretty',
     downloadMode: (mode === 'audio' || ['mp3','ogg','opus','wav'].includes(fmt)) ? 'audio' : mode
@@ -605,21 +800,18 @@ async function resolveUrl(task, signal) {
   }
 
   if (strategy === 'direct') {
-    throw new Error('هذا الرابط ليس ملفاً مباشراً. اختر «خادمي الخاص» أو Cobalt في الإعدادات، أو ضع رابط ملف mp4/mp3.');
+    throw new Error('هذا الرابط ليس ملفاً مباشراً. غيّر محرك الاستخراج إلى «تلقائي» وشغّل المساعد المحلي، أو ضع رابط ملف mp4/mp3.');
   }
 
-  // Self-host first
+  // Cobalt: custom first, then the chosen public instance, then all the others (failover)
   const endpoints = [];
   let custom = ($('#customEndpoint').value || '').trim().replace(/\/$/, '');
   if (custom && !/^https?:\/\//i.test(custom)) custom = 'https://' + custom;
   if (custom && !validUrl(custom)) throw new Error('رابط الخادم الخاص غير صالح: ' + custom);
-  if (strategy === 'selfhost' && custom) endpoints.push(custom);
-  if (strategy === 'cobalt' || strategy === 'selfhost') {
-    const ep = $('#endpoint').value;
-    if (ep === 'auto') endpoints.push(...OPEN_ENDPOINTS);
-    else endpoints.push(ep);
-  }
-  if (custom && strategy === 'cobalt') endpoints.unshift(custom);
+  if (custom) endpoints.push(custom);
+  const ep = $('#endpoint').value;
+  if (ep !== 'auto') endpoints.push(ep);
+  OPEN_ENDPOINTS.forEach(o => { if (!endpoints.includes(o)) endpoints.push(o); });
 
   if (!endpoints.length) {
     throw new Error('لا يوجد خادم. أضف رابط خادمك في الإعدادات لتحقيق الاستقلالية الكاملة.');
@@ -831,12 +1023,31 @@ async function run(task) {
   state.running++;
   task.status = 'processing';
   task.error = '';
+  task.helperErr = '';
+  task.note = '';
   task.progress = 4;
   renderQueue();
   const ctrl = new AbortController();
   state.controllers.set(task.id, ctrl);
 
   try {
+    let viaHelper = false;
+    const strategy = $('#strategy').value;
+    if (strategy !== 'direct' && strategy !== 'cobalt' && !isDirect(task.source)) {
+      if (await checkHelper()) {
+        try { await helperRun(task, ctrl.signal); viaHelper = true; }
+        catch (e) {
+          if (e.name === 'AbortError') throw e;
+          task.helperErr = (e.message || String(e)) + (e.hint ? ' — ' + e.hint : '');
+          log('HELPER FAIL · ' + task.helperErr);
+          if (strategy === 'helper') throw new Error(task.helperErr);
+          task.status = 'processing'; task.progress = 5; renderQueue();
+        }
+      } else if (strategy === 'helper') {
+        throw new Error('المساعد المحلي غير متصل. شغّله ثم أعد المحاولة (القائمة ← المساعد المحلي).');
+      }
+    }
+    if (!viaHelper) await (async () => {
     const data = await resolveUrl(task, ctrl.signal);
     if (data.type === 'picker') {
       if (!data.items?.length) throw new Error('لا عناصر');
@@ -858,6 +1069,7 @@ async function run(task) {
     task.progress = 10;
     renderQueue();
     await fetchToDisk(task, ctrl.signal);
+    })();
     task.status = 'done';
     task.progress = 100;
     state.stats.success++;
@@ -874,7 +1086,13 @@ async function run(task) {
       task.status = 'error'; task.error = 'أُلغي';
       log('CANCEL  ' + task.source);
     } else {
-      task.status = 'error'; task.error = friendlyError(e);
+      task.status = 'error';
+      let msg = friendlyError(e);
+      if (task.helperErr) msg = 'المساعد: ' + task.helperErr;
+      else if (!helper.ok && !isDirect(task.source) && $('#strategy').value !== 'direct') {
+        msg += ' ← شغّل المساعد المحلي لتحميل هذا الرابط (القائمة ← المساعد المحلي).';
+      }
+      task.error = msg;
       state.stats.failed++;
       log('ERR  ' + task.error);
     }
@@ -910,7 +1128,7 @@ function cancelTask(id) {
 function retry(id) {
   const t = state.tasks.find(x => x.id === id);
   if (!t) return;
-  t.status = 'queued'; t.progress = 0; t.error = ''; t.note = ''; t.speed = 0; t.bytes = 0;
+  t.status = 'queued'; t.progress = 0; t.error = ''; t.note = ''; t.fileUrl = ''; t.speed = 0; t.bytes = 0;
   pump(); renderQueue();
 }
 function removeTask(id) {
@@ -942,6 +1160,7 @@ function renderQueue() {
         <span>${t.bytes?fmtBytes(t.bytes):''}${t.speed?' · <span class="speed">'+fmtSpeed(t.speed)+'</span>':''}</span>
         <span class="actions">
           ${canCancel?`<button class="act danger" data-act="cancel" data-id="${t.id}" style="padding:4px 8px;font-size:11px">إلغاء</button>`:''}
+          ${t.fileUrl&&t.status==='done'?`<button class="act good" data-act="save" data-id="${t.id}" style="padding:4px 8px;font-size:11px">حفظ</button>`:''}
           ${canRetry?`<button class="act" data-act="retry" data-id="${t.id}" style="padding:4px 8px;font-size:11px">إعادة</button>`:''}
           <button class="act ghost" data-act="remove" data-id="${t.id}" style="padding:4px 8px;font-size:11px">✕</button>
         </span>
@@ -1134,8 +1353,29 @@ $('#queue').addEventListener('click', e => {
   if (act === 'cancel') cancelTask(id);
   else if (act === 'retry') retry(id);
   else if (act === 'remove') removeTask(id);
+  else if (act === 'save') { const t = state.tasks.find(x => x.id === id); if (t && t.fileUrl) { nativeDownload(t.fileUrl, t.filename); toast('بدأ الحفظ'); } }
 });
 
+$('#helperTest').onclick = async () => { const ok = await checkHelper(true); toast(ok ? 'المساعد متصل ✓' : 'المساعد غير متصل'); };
+$('#helperTest2').onclick = async () => { const ok = await checkHelper(true); toast(ok ? 'المساعد متصل ✓' : 'المساعد غير متصل'); };
+$('#helperUrl').onchange = () => { save(); checkHelper(true); };
+document.addEventListener('click', async e => {
+  const l = e.target.closest('[data-sheet-link]');
+  if (l) { showSheet(l.dataset.sheetLink); return; }
+  const c = e.target.closest('[data-copy]');
+  if (c) {
+    const el = document.getElementById(c.dataset.copy);
+    const text = el ? el.innerText : '';
+    try { await navigator.clipboard.writeText(text); toast('تم النسخ'); }
+    catch {
+      try {
+        const r = document.createRange(); r.selectNodeContents(el);
+        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r);
+        toast(document.execCommand('copy') ? 'تم النسخ' : 'حدّد النص يدوياً وانسخه');
+      } catch { toast('حدّد النص يدوياً وانسخه'); }
+    }
+  }
+});
 $('#pickFolder').onclick = pickFolder;
 $('#clearFolder').onclick = clearFolder;
 $('#clearHistory').onclick = async () => { if (await askConfirm('مسح السجل؟')) { state.history=[]; save(); renderHistory(); } };
@@ -1185,6 +1425,8 @@ applyLang('ar');
 setupInstall();
 load();
 renderQueue();
+renderHelperChip();
+initHelper();
 handleLaunchParams();
 if (new URLSearchParams(location.search).get('action') === 'new') $('#url').focus();
 log('ALTRA-DAWNLOADER v7 READY');

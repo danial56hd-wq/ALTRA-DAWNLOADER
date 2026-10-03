@@ -1,4 +1,5 @@
-const CACHE = 'altra-v7-2';
+
+const CACHE = 'altra-v7-3';
 const ASSETS = [
   './',
   './index.html',
@@ -23,6 +24,20 @@ self.addEventListener('fetch', e => {
   if (e.request.method !== 'GET') return;
   const url = new URL(e.request.url);
   if (url.origin !== self.location.origin) return;
+  if (/^\/(api|file|health)(\/|$)/.test(url.pathname) || e.request.headers.has('range')) return;
+  // الصفحة نفسها: الشبكة أولاً حتى تصل التحديثات فوراً، ثم الذاكرة عند انقطاع الإنترنت
+  if (e.request.mode === 'navigate' || /\.html$/.test(url.pathname)) {
+    e.respondWith(
+      fetch(e.request).then(res => {
+        if (res && res.ok && res.type === 'basic') {
+          const copy = res.clone();
+          caches.open(CACHE).then(c => c.put(e.request, copy));
+        }
+        return res;
+      }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(c => c || caches.match('./index.html')))
+    );
+    return;
+  }
   e.respondWith(
     caches.match(e.request, { ignoreSearch: true }).then(cached => {
       const net = fetch(e.request).then(res => {

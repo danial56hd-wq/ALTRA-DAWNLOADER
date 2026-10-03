@@ -7,7 +7,7 @@
 **محمّل وسائط مستقل وقابل للتثبيت · Independent, installable media downloader**
 
 [![Live App](https://img.shields.io/badge/Live%20App-افتح%20التطبيق-00d2ff?style=for-the-badge&logo=googlechrome&logoColor=white)](https://danial56hd-wq.github.io/ALTRA-DAWNLOADER/)
-[![Version](https://img.shields.io/badge/version-7.1-00ff88?style=for-the-badge)](#)
+[![Version](https://img.shields.io/badge/version-7.2-00ff88?style=for-the-badge)](#)
 [![PWA](https://img.shields.io/badge/PWA-installable-5a0fc8?style=for-the-badge&logo=pwa&logoColor=white)](#-التثبيت)
 [![License: MIT](https://img.shields.io/badge/License-MIT-ff9f43?style=for-the-badge)](LICENSE)
 
@@ -76,27 +76,58 @@
 
 > **اختصار:** `Ctrl + Enter` لبدء التحميل من الحقل على الكمبيوتر.
 
-## ⚙️ ما يعمل وما يحتاج خادمًا
+## 🧩 المساعد المحلي: تحميل من كل المواقع
 
-| نوع الرابط | يعمل بدون خادم؟ | ملاحظات |
-|---|:---:|---|
-| ملف مباشر (`.mp4` `.mp3` `.webm` `.m4a` …) | ✅ | يعمل فورًا، وإن منع الموقع الاتصال (CORS) يمرّره التطبيق لتنزيل المتصفح |
-| YouTube · Instagram · TikTok · X · Reddit · Facebook | ❌ | يحتاج خادم **Cobalt** أو واجهة **yt-dlp** خاصة بك |
+المتصفحات تمنع أي موقع من استخراج روابط الفيديو من يوتيوب وإنستغرام وتيك توك (CORS وحمايات المواقع)،
+ولا يمكن لتطبيق ويب ثابت تجاوز ذلك وحده. لذلك يتضمن المشروع **`altra-server.py`**،
+وهو مساعد صغير يعمل **على جهازك أنت** ويستخدم [yt-dlp](https://github.com/yt-dlp/yt-dlp) (أكثر من 1000 موقع).
+التطبيق يعتمد عليه أولًا، ثم يجرّب Cobalt، ثم الروابط المباشرة.
 
-**سبب ذلك:** المتصفحات تمنع استخراج روابط الوسائط من هذه المواقع مباشرة (CORS وحمايات الموقع).
-ولا يمكن لتطبيق ثابت تجاوز ذلك بنفسه، كما أن خوادم Cobalt العامة كثيرًا ما تطلب تحققًا أو تتوقف عن العمل.
+```text
+التطبيق  ──رابط──▶  المساعد المحلي (yt-dlp + ffmpeg)  ──ملف──▶  تنزيل المتصفح
+```
 
-### ربط خادمك الخاص
-1. شغّل خادم [Cobalt](https://github.com/imputnet/cobalt) على استضافتك.
-2. افتح القائمة **☰ ← الإعدادات**.
-3. ضع عنوانه في **رابط خادمك الخاص**، مثل `https://my-server.example`.
-4. اختر محرك الاستخراج **خادمي الخاص + مباشر**.
+| نوع الرابط | المساعد | بدونه |
+|---|:---:|:---:|
+| ملف مباشر (`.mp4` `.mp3` …) | ✅ | ✅ |
+| YouTube · Instagram · TikTok · Facebook · X · Reddit · SoundCloud … | ✅ | ❌ |
+| دمج الفيديو والصوت، وتحويل MP3 وOGG وOPUS وWAV | ✅ (مع ffmpeg) | ❌ |
+
+### أندرويد (Termux)
+1. ثبّت **Termux** من [F-Droid](https://f-droid.org/packages/com.termux/).
+2. الصق هذا الأمر مرة واحدة في Termux:
+   ```bash
+   curl -fsSL https://danial56hd-wq.github.io/ALTRA-DAWNLOADER/setup-termux.sh | bash
+   ```
+3. اترك Termux يعمل، وافتح التطبيق: https://danial56hd-wq.github.io/ALTRA-DAWNLOADER/
+   فيتحول الشريط العلوي إلى 🟢 «المساعد المحلي متصل».
+4. في المرات القادمة: اكتب `altra` في Termux.
+
+> بدلًا من ذلك افتح **http://localhost:8787** وثبّت التطبيق من هناك، فيعمل مع المساعد دون أي إذن إضافي.
+> وإن سأل Chrome عن «الوصول إلى الشبكة المحلية» عند فتح التطبيق من GitHub Pages فاختر **سماح**.
+
+### الكمبيوتر
+```bash
+pip install -U "yt-dlp[default]"      # وثبّت ffmpeg
+python altra-server.py                # ثم افتح http://localhost:8787
+```
+خيارات: `--port 9000` · `--cookies cookies.txt` · `--browser chrome` · `--host 0.0.0.0` (للشبكة المحلية).
+
+### إنستغرام وما يطلب تسجيل الدخول
+صدّر ملف **cookies.txt** من متصفحك (إضافة «Get cookies.txt LOCALLY») وضعه بجوار `altra-server.py`، ثم أعد تشغيل المساعد.
+
+### الأمان
+- المساعد يستمع على جهازك فقط (`127.0.0.1`) ويرفض أي موقع غير موثوق، والمسموح هو localhost ورابط تطبيقك على GitHub Pages.
+- لا يقدّم إلا ملفات التطبيق (HTML/JS/PNG)، ولا يعرض ملف `cookies.txt` ولا أي ملف آخر.
+- الملفات المؤقتة تُحذف تلقائيًا بعد ساعة وعند الإيقاف.
 
 ## 🧱 بنية المشروع
 
 ```text
 ALTRA-DAWNLOADER/
 ├── index.html            # الواجهة والمنطق كاملًا
+├── altra-server.py       # المساعد المحلي (yt-dlp) لتحميل يوتيوب وإنستغرام وغيرها
+├── setup-termux.sh       # إعداد المساعد تلقائيًا على أندرويد
 ├── sw.js                 # Service Worker للعمل دون اتصال
 ├── manifest.webmanifest  # بيانات التثبيت والمشاركة إلى التطبيق
 ├── icon-192.png          # أيقونة التثبيت
@@ -129,7 +160,9 @@ python3 -m http.server 8080
 |---|---|
 | لا يظهر خيار التثبيت | تأكد أنك على رابط HTTPS، وجرّب تحديث الصفحة، ثم افتح قائمة المتصفح |
 | تظهر «تعذّر الاتصال بالمصدر» | الموقع يمنع CORS أو أنك دون إنترنت؛ جرّب رابط ملف مباشر أو ضع خادمك الخاص |
-| الروابط الاجتماعية تفشل | خوادم Cobalt العامة تتطلب تحققًا؛ استخدم خادمًا خاصًا |
+| الروابط الاجتماعية تفشل | شغّل المساعد المحلي (الشريط العلوي أخضر 🟢)؛ خوادم Cobalt العامة غير موثوقة |
+| «يطلب الموقع تسجيل دخول» | ضع `cookies.txt` بجوار `altra-server.py` |
+| يوتيوب يفشل فجأة | حدّث yt-dlp: `pip install -U "yt-dlp[default]"` |
 | التطبيق لا يحمّل التحديثات | أغلقه وأعد فتحه، أو امسح بيانات الموقع من إعدادات المتصفح |
 | مجلد الحفظ لا يعمل | الميزة مدعومة في Chrome وEdge على سطح المكتب؛ على الجوال يُستخدم حفظ الملف العادي |
 
@@ -183,4 +216,3 @@ Social platforms (YouTube, Instagram, TikTok…) require your own [Cobalt](https
 **[Open the app](https://danial56hd-wq.github.io/ALTRA-DAWNLOADER/)** · Licensed under MIT.
 
 </div>
-

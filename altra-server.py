@@ -90,6 +90,8 @@ class Job:
         self.size = 0
         self.error = ""
         self.hint = ""
+        self.login = False
+        self.site = site_of(url)
         self.created = time.time()
         self.finished = None
         self.cancel = threading.Event()
@@ -102,6 +104,7 @@ class Job:
             "eta": self.eta, "bytes": self.bytes, "title": self.title,
             "filename": self.filename, "size": self.size,
             "error": self.error, "hint": self.hint,
+            "login": self.login, "site": self.site,
         }
 
 
@@ -115,11 +118,44 @@ def clean_error(msg):
     return msg[:400]
 
 
+def site_of(url):
+    try:
+        h = (urlparse(url).hostname or "").lower()
+    except Exception:
+        return ""
+    for key, name in (("instagram", "instagram"), ("facebook", "facebook"), ("fb.watch", "facebook"),
+                      ("youtube", "youtube"), ("youtu.be", "youtube"), ("tiktok", "tiktok"),
+                      ("twitter.com", "x"), ("x.com", "x"), ("reddit", "reddit")):
+        if key in h:
+            return name
+    return h
+
+
+LOGIN_KEYS = ("login required", "sign in", "log in", "logged in", "cookies", "rate-limit",
+              "empty media response", "age-restricted", "confirm you", "authentication",
+              "checkpoint", "you must be", "restricted video", "private video")
+
+
+NOT_LOGIN_KEYS = ("unsupported url", "name or service not known", "timed out", "urlopen error",
+                  "temporary failure", "network is unreachable", "connection refused",
+                  "ffmpeg", "ffprobe", "no space left", "cancel")
+LOGIN_SITES = ("instagram", "facebook", "x", "tiktok")
+
+
+def login_needed(msg, url):
+    m = msg.lower()
+    if any(k in m for k in NOT_LOGIN_KEYS):
+        return False
+    if any(k in m for k in LOGIN_KEYS):
+        return True
+    # في إنستغرام وفيسبوك وX وتيك توك أغلب حالات الفشل سببها أن المقطع يتطلب حساباً
+    return site_of(url) in LOGIN_SITES
+
+
 def explain(msg):
     m = msg.lower()
-    if any(k in m for k in ("login required", "sign in", "log in", "cookies", "rate-limit",
-                            "empty media response", "age-restricted", "confirm you")):
-        return "يطلب الموقع تسجيل دخول. صدّر ملف cookies.txt من متصفحك وضعه بجوار altra-server.py ثم أعد تشغيل المساعد."
+    if any(k in m for k in LOGIN_KEYS):
+        return "هذا المحتوى يتطلب تسجيل الدخول. اضغط الشارة الزرقاء في التطبيق لاستيراد جلسة الدخول."
     if "unsupported url" in m:
         return "الرابط غير مدعوم أو لا يحتوي على فيديو."
     if "private" in m:
@@ -180,8 +216,8 @@ def build_opts(job, hook):
     else:
         opts["format"] = f"b{hf}[ext=mp4]/b{hf}/b[ext=mp4]/b"
 
-    cookies = CFG["cookies"] or (os.path.join(HERE, "cookies.txt") if os.path.isfile(os.path.join(HERE, "cookies.txt")) else None)
-    if cookies and os.path.isfile(cookies):
+    cookies = cookies_path()
+    if os.path.isfile(cookies):
         opts["cookiefile"] = cookies
     elif CFG["browser"]:
         opts["cookiesfrombrowser"] = (CFG["browser"],)
@@ -286,10 +322,77 @@ def run_job(job):
                 job.error = "أُلغي"
             else:
                 job.error = clean_error(e) or "فشل غير معروف"
-                job.hint = explain(job.error)
+                job.login = login_needed(job.error, job.url)
+                job.hint = explain(job.error) if not job.login else "هذا المحتوى يتطلب تسجيل الدخول. اضغط الشارة الزرقاء في التطبيق لاستيراد جلسة الدخول."
+                if not job.hint:
+                    job.hint = explain(job.error)
                 job.state, job.phase = "error", "error"
         finally:
             job.finished = time.time()
+
+
+def cookies_path():
+    return CFG["cookies"] or os.path.join(HERE, "cookies.txt")
+
+
+def parse_cookies(text):
+    """يقبل Netscape (cookies.txt) أو JSON من إضافة Cookie-Editor ويرجع قائمة صفوف Netscape."""
+    text = (text or "").strip().lstrip("\ufeff")
+    rows = []
+    far = int(time.time()) + 30 * 86400
+    if text[:1] in "[{":
+        data = json.loads(text)
+        if isinstance(data, dict):
+            data = data.get("cookies") or []
+        for c in data:
+            dom, name = str(c.get("domain") or ""), c.get("name")
+            if not dom or name is None:
+                continue
+            exp = c.get("expirationDate") or c.get("expires") or 0
+            exp = int(exp) if isinstance(exp, (int, float)) and exp > 0 else far
+            rows.append([("#HttpOnly_" if c.get("httpOnly") else "") + dom,
+                         "TRUE" if dom.startswith(".") else "FALSE", c.get("path") or "/",
+                         "TRUE" if c.get("secure") else "FALSE", str(exp), str(name), str(c.get("value") or "")])
+    else:
+        for line in text.splitlines():
+            line = line.rstrip("\r\n")
+            if not line.strip() or (line.startswith("#") and not line.startswith("#HttpOnly_")):
+                continue
+            parts = line.split("\t") if line.count("\t") >= 6 else re.split(r"\s+", line.strip(), 6)
+            if len(parts) < 7:
+                continue
+            rows.append(parts[:7])
+    return rows
+
+
+def save_cookies(rows, replace=False):
+    path = cookies_path()
+    keyed = {}
+    if not replace and os.path.isfile(path):
+        for r in parse_cookies(open(path, encoding="utf-8", errors="ignore").read()):
+            keyed[(r[0].replace("#HttpOnly_", ""), r[2], r[5])] = r
+    for r in rows:
+        keyed[(r[0].replace("#HttpOnly_", ""), r[2], r[5])] = r
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        f.write("# Netscape HTTP Cookie File\n")
+        for r in keyed.values():
+            f.write("\t".join(r) + "\n")
+    try:
+        os.chmod(path, 0o600)
+    except OSError:
+        pass
+    return sorted({k[0].lstrip(".") for k in keyed})
+
+
+def cookie_domains():
+    path = cookies_path()
+    if not os.path.isfile(path):
+        return []
+    try:
+        rows = parse_cookies(open(path, encoding="utf-8", errors="ignore").read())
+    except Exception:
+        return []
+    return sorted({r[0].replace("#HttpOnly_", "").lstrip(".") for r in rows})
 
 
 def cleaner():
@@ -378,7 +481,8 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True, "altra": True, "version": VERSION,
                 "ytdlp": getattr(getattr(yt_dlp, "version", None), "__version__", None) if yt_dlp else None,
                 "ffmpeg": CFG["has_ffmpeg"],
-                "cookies": bool(CFG["cookies"] or os.path.isfile(os.path.join(HERE, "cookies.txt"))),
+                "cookies": bool(cookie_domains()),
+                "cookie_domains": cookie_domains(),
             })
         m = re.match(r"^/api/status/([0-9a-f]{16})$", path)
         if m:
@@ -401,7 +505,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         try:
             n = int(self.headers.get("Content-Length") or 0)
-            raw = self.rfile.read(min(n, 65536)) if n else b"{}"
+            limit = 2 * 1024 * 1024 if path == "/api/cookies" else 65536
+            if n > limit:
+                return self.send_json({"error": "too large"}, 413)
+            raw = self.rfile.read(n) if n else b"{}"
             data = json.loads(raw.decode("utf-8") or "{}")
         except Exception:
             return self.send_json({"error": "bad json"}, 400)
@@ -424,6 +531,22 @@ class Handler(BaseHTTPRequestHandler):
                 JOBS[job.id] = job
             threading.Thread(target=run_job, args=(job,), daemon=True).start()
             return self.send_json({"id": job.id})
+
+        if path == "/api/cookies":
+            try:
+                rows = parse_cookies(str(data.get("text") or ""))
+            except Exception:
+                return self.send_json({"error": "تعذّر قراءة الملف. استخدم cookies.txt أو JSON من Cookie-Editor."}, 400)
+            if not rows:
+                return self.send_json({"error": "لم أجد أي كوكيز صالحة في النص."}, 400)
+            doms = save_cookies(rows, replace=bool(data.get("replace")))
+            return self.send_json({"ok": True, "count": len(rows), "domains": doms})
+        if path == "/api/cookies/clear":
+            try:
+                os.remove(cookies_path())
+            except OSError:
+                pass
+            return self.send_json({"ok": True})
 
         m = re.match(r"^/api/cancel/([0-9a-f]{16})$", path)
         if m:

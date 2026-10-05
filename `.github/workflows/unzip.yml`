@@ -1,0 +1,32 @@
+name: Unzip upload
+on:
+  push:
+    paths: ['*.zip']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  unzip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract
+        run: |
+          shopt -s nullglob
+          for z in *.zip; do
+            rm -rf /tmp/x && mkdir /tmp/x
+            unzip -q "$z" -d /tmp/x
+            d=/tmp/x
+            if [ "$(ls -A /tmp/x | wc -l)" -eq 1 ] && [ -d "/tmp/x/$(ls -A /tmp/x)" ]; then
+              d="/tmp/x/$(ls -A /tmp/x)"
+            fi
+            cp -a "$d"/. .
+            git rm -q -f "$z"
+          done
+      - name: Commit
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Extract uploaded zip" || echo "nothing to commit"
+          git push

@@ -1,0 +1,9 @@
+# بيانات حساسة: جلسات الدخول لا تُرفع أبداً
+cookies.txt
+cookies*.json
+
+# مؤقتات
+__pycache__/
+*.pyc
+altra-cache/
+.DS_Store

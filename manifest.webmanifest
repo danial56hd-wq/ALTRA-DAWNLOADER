@@ -30,7 +30,7 @@
       "purpose": "maskable"
     }
   ],
-  "categories": ["utilities", "productivity"],
+  "categories": ["utilities", "productivity", "multimedia"],
   "share_target": {
     "action": "./index.html",
     "method": "GET",
@@ -41,11 +41,20 @@
       "url": "url"
     }
   },
+  "launch_handler": {
+    "client_mode": "navigate-existing"
+  },
   "shortcuts": [
     {
       "name": "تحميل جديد",
       "short_name": "تحميل",
       "url": "./index.html?action=new",
+      "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
+    },
+    {
+      "name": "بحث متقدم",
+      "short_name": "بحث",
+      "url": "./index.html?sheet=search",
       "icons": [{ "src": "icon-192.png", "sizes": "192x192" }]
     }
   ],

@@ -22,17 +22,140 @@ import mimetypes
 import os
 import re
 import shutil
+import signal
 import sys
 import tempfile
 import threading
 import time
 import uuid
+import subprocess
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import quote, unquote, urlparse
 
-VERSION = "7.3"
+VERSION = "8.5"
 HERE = os.path.realpath(os.path.dirname(os.path.abspath(__file__)))
+
+DASHBOARD_HTML = r'''<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ALTRA Helper · لوحة التحكم</title>
+<style>
+:root{--bg:#05080d;--card:#0c1219;--border:#1a2533;--c:#00d2ff;--g:#00ff88;--r:#ff4757;--y:#ffc107;--t:#e8f0f8;--m:#8ba3b8}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--t);min-height:100vh;padding:16px}
+h1{font-size:1.4rem;color:var(--c);margin-bottom:4px}
+.sub{color:var(--m);font-size:.85rem;margin-bottom:20px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:20px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:14px 16px}
+.card .label{font-size:.75rem;color:var(--m);margin-bottom:4px}
+.card .val{font-size:1.3rem;font-weight:700;color:var(--c)}
+.card .val.g{color:var(--g)}.card .val.r{color:var(--r)}.card .val.y{color:var(--y)}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+button{background:#0e1a24;border:1px solid var(--border);color:var(--t);padding:8px 14px;border-radius:8px;cursor:pointer;font-size:.85rem;transition:.15s}
+button:hover{border-color:var(--c);color:var(--c)}
+button.danger{border-color:#5a2020;color:#ff8a8a}button.danger:hover{background:#2a1010}
+button.good{border-color:#1a4a30;color:var(--g)}button.good:hover{background:#0a2a18}
+table{width:100%;border-collapse:collapse;font-size:.82rem}
+th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--border)}
+th{color:var(--m);font-weight:600;position:sticky;top:0;background:var(--card)}
+tr:hover{background:#0f1820}
+.badge{display:inline-block;padding:2px 8px;border-radius:99px;font-size:.72rem;font-weight:600}
+.b-queued{background:#1a2a3a;color:#7ab} .b-running{background:#1a3a2a;color:var(--g)}
+.b-done{background:#0a2a1a;color:#6f6} .b-error{background:#3a1515;color:#f88}
+.b-cancelled{background:#2a2a1a;color:#cc8}
+.prog{height:4px;background:#1a2533;border-radius:99px;overflow:hidden;min-width:60px}
+.prog>i{display:block;height:100%;background:linear-gradient(90deg,var(--c),var(--g));border-radius:99px}
+.empty{text-align:center;padding:40px;color:var(--m)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1a2a3a;border:1px solid var(--c);padding:10px 20px;border-radius:10px;opacity:0;transition:.3s;pointer-events:none;z-index:99}
+.toast.show{opacity:1}
+a{color:var(--c);text-decoration:none}
+footer{margin-top:30px;text-align:center;color:var(--m);font-size:.75rem}
+</style>
+</head>
+<body>
+<h1>⚙️ ALTRA Helper · لوحة التحكم</h1>
+<div class="sub">v''' + VERSION + r''' · المساعد المحلي · <a href="/">العودة للتطبيق</a></div>
+
+<div class="grid" id="stats">
+  <div class="card"><div class="label">الحالة</div><div class="val g" id="s-status">...</div></div>
+  <div class="card"><div class="label">وقت التشغيل</div><div class="val" id="s-uptime">—</div></div>
+  <div class="card"><div class="label">المهام النشطة</div><div class="val" id="s-active">0</div></div>
+  <div class="card"><div class="label">إجمالي المهام</div><div class="val" id="s-total">0</div></div>
+  <div class="card"><div class="label">حجم الكاش</div><div class="val" id="s-cache">—</div></div>
+  <div class="card"><div class="label">yt-dlp</div><div class="val" id="s-ytdlp">—</div></div>
+</div>
+
+<div class="actions">
+  <button class="good" onclick="refresh()">🔄 تحديث</button>
+  <button onclick="clearFinished()">🧹 مسح المنتهية</button>
+  <button class="danger" onclick="cancelAll()">⏹ إلغاء الكل</button>
+  <button class="danger" onclick="clearCache()">🗑 تفريغ الكاش بالكامل</button>
+</div>
+
+<div class="card" style="overflow:auto;max-height:55vh">
+<table>
+<thead><tr>
+  <th>الحالة</th><th>التقدم</th><th>العنوان / الرابط</th><th>الموقع</th><th>الحجم</th><th>السرعة</th><th></th>
+</tr></thead>
+<tbody id="jobs"></tbody>
+</table>
+<div class="empty" id="empty" style="display:none">لا توجد مهام حالياً</div>
+</div>
+
+<footer>ALTRA Helper Control Panel · التحديث التلقائي كل 3 ثوانٍ</footer>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function toast(m){const t=$('#toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500)}
+function fmtBytes(n){if(!n||n<0)return'—';const u=['B','KB','MB','GB'];let i=0;while(n>=1024&&i<3){n/=1024;i++}return n.toFixed(i?1:0)+' '+u[i]}
+function fmtUp(s){const h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;return(h?h+'س ':'')+(m?m+'د ':'')+sec+'ث'}
+function badge(st){return'<span class="badge b-'+st+'">'+({queued:'في الانتظار',running:'جاري',done:'مكتمل',error:'خطأ',cancelled:'ملغى'}[st]||st)+'</span>'}
+async function refresh(){
+  try{
+    const [info,jobsRes]=await Promise.all([fetch('/api/info').then(r=>r.json()),fetch('/api/jobs').then(r=>r.json())]);
+    $('#s-status').textContent='متصل';$('#s-status').className='val g';
+    $('#s-uptime').textContent=fmtUp(info.uptime||0);
+    const st=info.jobs_by_state||{};
+    const active=(st.queued||0)+(st.running||0);
+    $('#s-active').textContent=active;
+    $('#s-active').className=active?'val y':'val';
+    $('#s-total').textContent=info.jobs_total||0;
+    $('#s-cache').textContent=fmtBytes(info.cache_size)+(info.cache_files?' ('+info.cache_files+')':'');
+    $('#s-ytdlp').textContent=info.ytdlp||'غير مثبّت';
+    $('#s-ytdlp').className=info.ytdlp?'val g':'val r';
+    const jobs=jobsRes.jobs||[];
+    const tb=$('#jobs');tb.innerHTML='';
+    $('#empty').style.display=jobs.length?'none':'block';
+    for(const j of jobs){
+      const tr=document.createElement('tr');
+      const title=(j.title||j.url||'').slice(0,60);
+      tr.innerHTML=`
+        <td>${badge(j.state)}</td>
+        <td><div class="prog"><i style="width:${j.progress||0}%"></i></div> ${Math.round(j.progress||0)}%</td>
+        <td title="${esc(j.url)}">${esc(title)}${(j.error?' <small style="color:#f88">'+esc(j.error.slice(0,40))+'</small>':'')}</td>
+        <td>${esc(j.site)||'—'}</td>
+        <td>${fmtBytes(j.size||j.bytes)}</td>
+        <td>${j.speed?fmtBytes(j.speed)+'/s':'—'}</td>
+        <td>${['queued','running'].includes(j.state)?`<button onclick="cancel('${esc(j.id)}')">إلغاء</button>`:''}
+            ${j.state==='done'?`<a href="/file/${esc(j.id)}" download>تحميل</a>`:''}</td>`;
+      tb.appendChild(tr);
+    }
+  }catch(e){$('#s-status').textContent='خطأ';$('#s-status').className='val r';toast('فشل التحديث: '+e.message)}
+}
+async function cancel(id){await fetch('/api/cancel/'+id,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('تم الإلغاء');refresh()}
+async function cancelAll(){if(!confirm('إلغاء كل المهام الجارية؟'))return;const r=await fetch('/api/cancel-all',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(x=>x.json());toast('أُلغي '+r.cancelled);refresh()}
+async function clearFinished(){const r=await fetch('/api/jobs/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'}).then(x=>x.json());toast('تم مسح '+r.removed+' مهمة');refresh()}
+async function clearCache(){if(!confirm('تفريغ الكاش بالكامل وحذف كل المهام؟'))return;await fetch('/api/cache/clear',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});toast('تم تفريغ الكاش');refresh()}
+refresh();setInterval(refresh,3000);
+</script>
+</body>
+</html>
+'''
 
 # ── yt-dlp: مثبّت عبر pip، أو ملف yt-dlp (zipapp) بجوار هذا الملف ──────────────
 yt_dlp = None
@@ -62,10 +185,12 @@ CFG = {
     "allow_all": False,
     "loopback": True,
     "has_ffmpeg": bool(shutil.which("ffmpeg")),
+    "save": None,
 }
 JOBS = {}
 JOBS_LOCK = threading.Lock()
-SLOTS = threading.BoundedSemaphore(4)
+SLOTS = threading.BoundedSemaphore(10)
+START_TIME = time.time()
 
 
 class Cancelled(Exception):
@@ -91,6 +216,9 @@ class Job:
         self.error = ""
         self.hint = ""
         self.login = False
+        self.saved = ""
+        self.gallery = False
+        self.save_error = ""
         self.site = site_of(url)
         self.created = time.time()
         self.finished = None
@@ -105,6 +233,8 @@ class Job:
             "filename": self.filename, "size": self.size,
             "error": self.error, "hint": self.hint,
             "login": self.login, "site": self.site,
+            "saved": self.saved, "gallery": self.gallery, "save_error": self.save_error,
+            "url": self.url, "created": self.created, "finished": self.finished,
         }
 
 
@@ -123,9 +253,17 @@ def site_of(url):
         h = (urlparse(url).hostname or "").lower()
     except Exception:
         return ""
-    for key, name in (("instagram", "instagram"), ("facebook", "facebook"), ("fb.watch", "facebook"),
-                      ("youtube", "youtube"), ("youtu.be", "youtube"), ("tiktok", "tiktok"),
-                      ("twitter.com", "x"), ("x.com", "x"), ("reddit", "reddit")):
+    for exact, name in (("x.com", "x"), ("twitter.com", "x"), ("vk.com", "vk"), ("ok.ru", "ok")):
+        if h == exact or h.endswith("." + exact):
+            return name
+    for key, name in (
+        ("instagram", "instagram"), ("facebook", "facebook"), ("fb.watch", "facebook"),
+        ("youtube", "youtube"), ("youtu.be", "youtube"), ("tiktok", "tiktok"),
+        ("reddit", "reddit"),
+        ("soundcloud", "soundcloud"), ("vimeo", "vimeo"), ("dailymotion", "dailymotion"),
+        ("twitch", "twitch"), ("bilibili", "bilibili"), ("pinterest", "pinterest"),
+        ("snapchat", "snapchat"), ("tumblr", "tumblr"),
+    ):
         if key in h:
             return name
     return h
@@ -180,9 +318,10 @@ def build_opts(job, hook):
     audio = mode == "audio" or fmt in AUDIO_FORMATS
 
     hf = f"[height<={h}]" if h else ""
+    is_search = bool(re.match(r"^(ytsearch|ytsearchdate|youtube:search)\d*:", job.url or "", re.I))
     opts = {
         "outtmpl": os.path.join(job.dir, "%(title).120B [%(id)s].%(ext)s"),
-        "noplaylist": True,
+        "noplaylist": not is_search,
         "quiet": True,
         "no_warnings": True,
         "noprogress": True,
@@ -190,10 +329,12 @@ def build_opts(job, hook):
         "retries": 5,
         "fragment_retries": 5,
         "socket_timeout": 30,
-        "concurrent_fragment_downloads": 4,
+        "concurrent_fragment_downloads": 8,
         "windowsfilenames": True,
         "overwrites": True,
     }
+    if is_search:
+        opts["playlistend"] = 5  # safety limit for ytsearchN
     stages = 1
     if audio:
         opts["format"] = "bestaudio/best"
@@ -258,8 +399,10 @@ def run_job(job):
     with SLOTS:
         if job.cancel.is_set():
             job.state, job.phase = "cancelled", "cancelled"
+            job.error = "أُلغي"
+            job.finished = time.time()
             return
-        job.state, job.phase = "running", "starting"
+        job.state, job.phase = "running", "analyzing"
         try:
             if yt_dlp is None:
                 raise RuntimeError("yt-dlp غير مثبّت. نفّذ: pip install -U \"yt-dlp[default]\"")
@@ -288,8 +431,17 @@ def run_job(job):
                     job.phase = "processing"
 
             opts, holder["stages"] = build_opts(job, hook)
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(job.url, download=True)
+            try:
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(normalize_url(job.url), download=True)
+            except Exception as fe:  # noqa: BLE001
+                # الصيغة المطلوبة غير متوفرة (شائع في فيسبوك): أعد المحاولة بأوسع اختيار ممكن
+                if job.cancel.is_set() or "requested format" not in str(fe).lower():
+                    raise
+                opts["format"] = "bv*+ba/b" if CFG["has_ffmpeg"] and not opts.get("postprocessors") else "b/best"
+                opts.pop("merge_output_format", None) if opts["format"] == "b/best" else None
+                with yt_dlp.YoutubeDL(opts) as ydl:
+                    info = ydl.extract_info(normalize_url(job.url), download=True)
             if job.cancel.is_set():
                 raise Cancelled()
             if not info:
@@ -311,6 +463,7 @@ def run_job(job):
             job.filename = os.path.basename(final)
             job.size = os.path.getsize(final)
             job.bytes = job.size
+            publish_to_gallery(job)
             job.progress = 100.0
             job.state, job.phase = "done", "done"
         except Cancelled:
@@ -340,7 +493,7 @@ def parse_cookies(text):
     text = (text or "").strip().lstrip("\ufeff")
     rows = []
     far = int(time.time()) + 30 * 86400
-    if text[:1] in "[{":
+    if text[:1] in ("[", "{"):
         data = json.loads(text)
         if isinstance(data, dict):
             data = data.get("cookies") or []
@@ -350,15 +503,16 @@ def parse_cookies(text):
                 continue
             exp = c.get("expirationDate") or c.get("expires") or 0
             exp = int(exp) if isinstance(exp, (int, float)) and exp > 0 else far
-            rows.append([("#HttpOnly_" if c.get("httpOnly") else "") + dom,
-                         "TRUE" if dom.startswith(".") else "FALSE", c.get("path") or "/",
-                         "TRUE" if c.get("secure") else "FALSE", str(exp), str(name), str(c.get("value") or "")])
+            clean = lambda v: re.sub(r"[\t\r\n]", "", str(v))
+            rows.append([("#HttpOnly_" if c.get("httpOnly") else "") + clean(dom),
+                         "TRUE" if dom.startswith(".") else "FALSE", clean(c.get("path") or "/"),
+                         "TRUE" if c.get("secure") else "FALSE", str(exp), clean(name), clean(c.get("value") or "")])
     else:
         for line in text.splitlines():
             line = line.rstrip("\r\n")
             if not line.strip() or (line.startswith("#") and not line.startswith("#HttpOnly_")):
                 continue
-            parts = line.split("\t") if line.count("\t") >= 6 else re.split(r"\s+", line.strip(), 6)
+            parts = line.split("\t") if line.count("\t") >= 6 else re.split(r"\s+", line.strip(), maxsplit=6)
             if len(parts) < 7:
                 continue
             rows.append(parts[:7])
@@ -393,6 +547,115 @@ def cookie_domains():
     except Exception:
         return []
     return sorted({r[0].replace("#HttpOnly_", "").lstrip(".") for r in rows})
+
+
+def detect_gallery_base():
+    """مجلد التخزين المشترك (أندرويد/Termux) ليظهر الملف في المعرض."""
+    if CFG["save"] == "off":
+        return None
+    if CFG["save"]:
+        return CFG["save"]
+    home = os.path.expanduser("~")
+    for c in (os.path.join(home, "storage", "shared"), "/storage/emulated/0", "/sdcard"):
+        if os.path.isdir(c) and os.access(c, os.W_OK):
+            return c
+    return None
+
+
+def media_scan(path):
+    for cmd in (["termux-media-scan", path],
+                ["am", "broadcast", "-a", "android.intent.action.MEDIA_SCANNER_SCAN_FILE", "-d", "file://" + path]):
+        if shutil.which(cmd[0]):
+            try:
+                subprocess.run(cmd, timeout=15, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return True
+            except Exception:  # noqa: BLE001
+                pass
+    return False
+
+
+def publish_to_gallery(job):
+    """ينسخ الملف النهائي إلى معرض الجوال، وإن لم يتوفر فإلى ~/altra-downloads (دائم، لا يُحذف)."""
+    base = detect_gallery_base()
+    ext = os.path.splitext(job.filepath)[1].lower().lstrip(".")
+    sub = "Music" if ext in AUDIO_FORMATS or ext == "weba" else ("Movies" if ext in ("mp4", "webm", "mkv", "mov", "m4v", "3gp") else "Download")
+    if base:
+        folder = base if CFG["save"] else os.path.join(base, sub, "ALTRA")
+    else:
+        folder = os.path.join(os.path.expanduser("~"), "altra-downloads")
+    try:
+        os.makedirs(folder, exist_ok=True)
+        dest = os.path.join(folder, job.filename)
+        n = 1
+        stem, e = os.path.splitext(dest)
+        while os.path.exists(dest):
+            dest = f"{stem} ({n}){e}"
+            n += 1
+        shutil.copy2(job.filepath, dest)
+        job.saved, job.gallery = dest, bool(base)
+        if base:
+            media_scan(dest)
+    except Exception as ex:  # noqa: BLE001
+        job.save_error = clean_error(ex)
+
+
+def ytdlp_old():
+    try:
+        import datetime
+        y, m, d = [int(x) for x in yt_dlp.version.__version__.split(".")[:3]]
+        return (datetime.date.today() - datetime.date(y, m, d)).days > 75
+    except Exception:  # noqa: BLE001
+        return False
+
+
+FB_JUNK = ("fbclid", "mibextid", "rdid", "__cft__[0]", "__tn__", "sfnsn", "refsrc")
+
+
+def normalize_url(url):
+    try:
+        u = urlparse(url)
+        h = (u.hostname or "").lower()
+        if h == "facebook.com" or h.endswith(".facebook.com"):
+            from urllib.parse import parse_qsl, urlencode, urlunparse
+            q = [(k, v) for k, v in parse_qsl(u.query) if k not in FB_JUNK]
+            h = re.sub(r"^(m|web|mbasic|touch|l|lm)\.", "www.", h)
+            return urlunparse((u.scheme, h, u.path, u.params, urlencode(q), ""))
+    except Exception:  # noqa: BLE001
+        pass
+    return url
+
+
+def stale_helpers():
+    """عمليات altra-server.py الأخرى (قديمة/معلّقة) تشغل المنفذ؛ نقرأها من /proc دون أي حزمة إضافية."""
+    me, out = os.getpid(), []
+    try:
+        pids = [p for p in os.listdir("/proc") if p.isdigit()]
+    except OSError:
+        return out
+    for p in pids:
+        if int(p) == me:
+            continue
+        try:
+            with open(f"/proc/{p}/cmdline", "rb") as f:
+                cmd = f.read().split(b"\0")
+        except OSError:
+            continue
+        if any(c.endswith(b"altra-server.py") for c in cmd) and b"python" in (cmd[0] if cmd else b""):
+            out.append(int(p))
+    return out
+
+
+def replace_old_helper():
+    """يوقف نسخة المساعد القديمة أو المعلّقة (SIGKILL يعمل حتى لو أوقفها أندرويد)."""
+    pids = stale_helpers()
+    for pid in pids:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except OSError:
+            pass
+    if pids:
+        time.sleep(1.2)
+    return pids
 
 
 def cleaner():
@@ -433,9 +696,9 @@ class Handler(BaseHTTPRequestHandler):
         host = (self.headers.get("Host") or "").rsplit(":", 1)[0].strip("[]")
         return host in ("localhost", "127.0.0.1", "::1", "")
 
-    def cors(self):
+    def cors(self, force=False):
         origin = self.headers.get("Origin")
-        if origin and self.origin_ok():
+        if origin and (force or self.origin_ok()):
             self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Vary", "Origin")
             self.send_header("Access-Control-Allow-Private-Network", "true")
@@ -443,13 +706,13 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Access-Control-Allow-Headers", "Content-Type")
             self.send_header("Access-Control-Expose-Headers", "Content-Disposition, Content-Length")
 
-    def send_json(self, obj, status=200):
+    def send_json(self, obj, status=200, force_cors=False):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
-        self.cors()
+        self.cors(force_cors)
         self.end_headers()
         self.wfile.write(body)
 
@@ -458,18 +721,21 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"error": "host not allowed"}, 403)
             return False
         if not self.origin_ok():
-            self.send_json({"error": "origin not allowed. use --origin"}, 403)
+            print(f" ⛔ طلب مرفوض من الموقع: {self.headers.get('Origin')}  ← لو هذا موقعك شغّل المساعد مع:  --origin {self.headers.get('Origin')}")
+            o = self.headers.get("Origin")
+            self.send_json({"error": "origin not allowed", "origin": o, "fix": "python altra-server.py --origin " + str(o)}, 403, True)
             return False
         return True
 
     # --- طرق HTTP
     def do_OPTIONS(self):
-        if not self.guard():
-            return
+        if not self.host_ok():
+            return self.send_json({"error": "host not allowed"}, 403)
+        # الفحص المبدئي يُجاب دائماً ليقرأ التطبيق سبب الرفض؛ أما الطلب الفعلي فيمرّ عبر guard()
         self.send_response(204)
         self.send_header("Content-Length", "0")
         self.send_header("Access-Control-Max-Age", "600")
-        self.cors()
+        self.cors(True)
         self.end_headers()
 
     def do_GET(self):
@@ -480,9 +746,48 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({
                 "ok": True, "altra": True, "version": VERSION,
                 "ytdlp": getattr(getattr(yt_dlp, "version", None), "__version__", None) if yt_dlp else None,
-                "ffmpeg": CFG["has_ffmpeg"],
+                "ffmpeg": CFG["has_ffmpeg"], "ytdlp_old": ytdlp_old(),
                 "cookies": bool(cookie_domains()),
                 "cookie_domains": cookie_domains(),
+            })
+        if path in ("/dashboard", "/admin", "/control"):
+            return self.serve_dashboard()
+        if path == "/api/jobs":
+            with JOBS_LOCK:
+                jobs = [j.public() for j in sorted(JOBS.values(), key=lambda x: x.created, reverse=True)]
+            return self.send_json({"jobs": jobs, "count": len(jobs)})
+        if path == "/api/info":
+            cache_size = 0
+            cache_files = 0
+            try:
+                for root, dirs, files in os.walk(CFG["cache"]):
+                    for f in files:
+                        fp = os.path.join(root, f)
+                        try:
+                            cache_size += os.path.getsize(fp)
+                            cache_files += 1
+                        except OSError:
+                            pass
+            except OSError:
+                pass
+            with JOBS_LOCK:
+                states = {}
+                for j in JOBS.values():
+                    states[j.state] = states.get(j.state, 0) + 1
+            return self.send_json({
+                "ok": True, "version": VERSION,
+                "ytdlp": getattr(getattr(yt_dlp, "version", None), "__version__", None) if yt_dlp else None,
+                "ffmpeg": CFG["has_ffmpeg"], "ytdlp_old": ytdlp_old(),
+                "uptime": int(time.time() - START_TIME),
+                "jobs_total": sum(states.values()),
+                "jobs_by_state": states,
+                "cache_size": cache_size,
+                "cache_files": cache_files,
+                "cache_path": CFG["cache"],
+                "gallery": detect_gallery_base(),
+                "cookies": bool(cookie_domains()),
+                "cookie_domains": cookie_domains(),
+                "slots": SLOTS._value if hasattr(SLOTS, "_value") else 6,
             })
         m = re.match(r"^/api/status/([0-9a-f]{16})$", path)
         if m:
@@ -515,7 +820,8 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/api/resolve":
             url = str(data.get("url") or "").strip()
-            if not re.match(r"^https?://", url, re.I) or len(url) > 2048:
+            is_search = bool(re.match(r"^(ytsearch|ytsearchdate|youtube:search)\d*:", url, re.I))
+            if (not re.match(r"^https?://", url, re.I) and not is_search) or len(url) > 2048:
                 return self.send_json({"error": "رابط غير صالح"}, 400)
             q = str(data.get("quality") or "max")
             fmt = str(data.get("format") or "mp4").lower()
@@ -554,6 +860,38 @@ class Handler(BaseHTTPRequestHandler):
             if j:
                 j.cancel.set()
             return self.send_json({"ok": bool(j)})
+
+        if path == "/api/jobs/clear":
+            # clear finished / cancelled / error jobs
+            removed = []
+            with JOBS_LOCK:
+                to_del = [jid for jid, j in JOBS.items() if j.state in ("done", "cancelled", "error")]
+                for jid in to_del:
+                    j = JOBS.pop(jid, None)
+                    if j:
+                        removed.append(jid)
+            for jid in removed:
+                jdir = os.path.join(CFG["cache"], jid)
+                shutil.rmtree(jdir, ignore_errors=True)
+            return self.send_json({"ok": True, "removed": len(removed)})
+
+        if path == "/api/cache/clear":
+            # clear entire cache and all jobs
+            with JOBS_LOCK:
+                JOBS.clear()
+            shutil.rmtree(CFG["cache"], ignore_errors=True)
+            os.makedirs(CFG["cache"], exist_ok=True)
+            return self.send_json({"ok": True})
+
+        if path == "/api/cancel-all":
+            count = 0
+            with JOBS_LOCK:
+                for j in JOBS.values():
+                    if j.state in ("queued", "running"):
+                        j.cancel.set()
+                        count += 1
+            return self.send_json({"ok": True, "cancelled": count})
+
         return self.send_json({"error": "not found"}, 404)
 
     # --- ملفات
@@ -575,6 +913,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send_response(416)
                     self.send_header("Content-Range", f"bytes */{size}")
                     self.send_header("Content-Length", "0")
+                    self.cors()
                     self.end_headers()
                     return
                 status = 206
@@ -607,6 +946,17 @@ class Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             pass
 
+    def serve_dashboard(self):
+        html = DASHBOARD_HTML
+        body = html.encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
+
     def serve_static(self, path):
         rel = unquote(path.lstrip("/")) or "index.html"
         full = os.path.realpath(os.path.join(HERE, rel))
@@ -636,12 +986,21 @@ def main():
     ap.add_argument("--origin", action="append", default=[], help="سماح لموقع إضافي، أو * للجميع")
     ap.add_argument("--cache", help="مجلد الملفات المؤقتة")
     ap.add_argument("--keep", type=int, default=60, help="مدة حفظ الملفات المؤقتة بالدقائق")
-    ap.add_argument("--jobs", type=int, default=4, help="عدد التحميلات المتزامنة في المساعد")
+    ap.add_argument("--save-dir", help="مجلد حفظ نسخة نهائية (افتراضياً: معرض الجوال في Termux)، أو off للتعطيل")
+    ap.add_argument("--update", action="store_true", help="حدّث yt-dlp قبل التشغيل")
+    ap.add_argument("--jobs", type=int, default=10, help="عدد التحميلات المتزامنة في المساعد")
     a = ap.parse_args()
+    if a.update:
+        print("▶ تحديث yt-dlp …")
+        for pkg in ("yt-dlp[default]", "yt-dlp"):
+            if subprocess.run([sys.executable, "-m", "pip", "install", "-U", "-q", pkg]).returncode == 0:
+                break
+        os.execv(sys.executable, [sys.executable] + [x for x in sys.argv if x != "--update"])
 
     CFG["cookies"] = a.cookies
     CFG["browser"] = a.browser
     CFG["keep"] = a.keep
+    CFG["save"] = os.path.abspath(a.save_dir) if a.save_dir and a.save_dir != "off" else ("off" if a.save_dir == "off" else None)
     CFG["loopback"] = a.host in ("127.0.0.1", "localhost", "::1")
     for o in a.origin:
         if o == "*":
@@ -657,19 +1016,39 @@ def main():
     os.makedirs(CFG["cache"], exist_ok=True)
     threading.Thread(target=cleaner, daemon=True).start()
 
-    try:
-        srv = ThreadingHTTPServer((a.host, a.port), Handler)
-    except OSError as e:
-        print(f"تعذّر فتح المنفذ {a.port}: {e}\nجرّب منفذاً آخر:  python altra-server.py --port {a.port + 1}")
-        sys.exit(1)
+    srv = None
+    for attempt in range(2):
+        try:
+            srv = ThreadingHTTPServer((a.host, a.port), Handler)
+            break
+        except OSError as e:
+            old = replace_old_helper() if attempt == 0 else []
+            if old:
+                print(f" ♻ وُجدت نسخة قديمة/معلّقة من المساعد على المنفذ {a.port} (PID {', '.join(map(str, old))}) وأُوقفت، أعيد التشغيل…")
+                continue
+            print(f"تعذّر فتح المنفذ {a.port}: {e}\nبرنامج آخر يستخدمه. جرّب منفذاً آخر:  python altra-server.py --port {a.port + 1}\n(وضع نفس المنفذ في خانة «عنوان المساعد» بالتطبيق)")
+            sys.exit(1)
     srv.daemon_threads = True
+    # يمنع أندرويد من تجميد Termux في الخلفية (وهو سبب «غير متصل» رغم أن المنفذ مشغول)
+    if shutil.which("termux-wake-lock"):
+        try:
+            subprocess.Popen(["termux-wake-lock"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            pass
 
     ver = getattr(getattr(yt_dlp, "version", None), "__version__", None) if yt_dlp else None
     print("═" * 56)
     print(f" ALTRA Helper v{VERSION}")
     print(f" yt-dlp : {ver or 'غير مثبّت  ←  pip install -U \"yt-dlp[default]\"'}")
+    g = detect_gallery_base()
+    print(f" الحفظ  : {(g + '/Movies/ALTRA (المعرض)') if g and not CFG['save'] else g or '~/altra-downloads  (لتظهر في المعرض نفّذ: termux-setup-storage ثم أعد التشغيل)'}")
+    if ytdlp_old():
+        print(" ⚠ نسخة yt-dlp قديمة: شغّل مع --update أو  pip install -U yt-dlp")
     print(f" ffmpeg : {'متوفر' if CFG['has_ffmpeg'] else 'غير موجود (الدمج والتحويل معطّلان)'}")
     print(f" العنوان: http://{'localhost' if CFG['loopback'] else a.host}:{a.port}")
+    print(f" لوحة التحكم: http://{'localhost' if CFG['loopback'] else a.host}:{a.port}/dashboard")
+    if os.environ.get("PREFIX", "").startswith("/data/data/com.termux"):
+        print(" 🔋 لتجنّب تجميد أندرويد للمساعد: إعدادات الجوال ← البطارية ← Termux ← «غير مقيّد»")
     print(" اترك هذه النافذة مفتوحة أثناء التحميل.  إيقاف: Ctrl+C")
     print("═" * 56)
     try:
